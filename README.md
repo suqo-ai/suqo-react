@@ -137,7 +137,8 @@ mismatch to configure around.
 
 ## Requirements on the SUQO web app
 
-This package is one half of a protocol documented in the `js-checkout` project's `PROTOCOL.md`.
+This package is one half of a protocol documented in the `js-checkout` project's
+`docs/protocol.md`.
 It expects the app to serve `/c/<sessionId>` as a chrome-less payment block that posts
 `suqo:alive`, `suqo:ready`, `suqo:resize`, `suqo:gateway`, `suqo:redirect`, `suqo:unavailable`
 and `suqo:result`, and `/checkout/<sessionId>` as the hosted standalone equivalent. A change to
