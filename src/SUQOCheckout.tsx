@@ -6,14 +6,17 @@ import { FailurePanel } from './FailurePanel'
 import { createHostInstance, type HostInstance, type HostPhase } from './instance'
 import { Spinner } from './Spinner'
 import type { FailureStatus, LoadError, ResultParams, UnavailableReason } from './types'
-import { frameUrl, hostedCheckoutUrl, normaliseOrigin } from './urls'
+import { frameUrl, hostedCheckoutUrl, normaliseOrigin, type CheckoutMode } from './urls'
 import { useLatest } from './useLatest'
 
 export interface SUQOCheckoutProps {
   /** The checkout session id, e.g. `cks_9f2c41a8`. Changing it starts a different payment. */
   id: string
 
-  /** Where the checkout is served from. Defaults to `DEFAULT_ORIGIN`. */
+  /** `'live'` goes to `app.suqo.ai`, `'sandbox'` to `test.suqo.ai`. Defaults to `'sandbox'`. */
+  mode?: CheckoutMode | undefined
+
+  /** Where the checkout is served from. Overrides `mode` when set. */
   origin?: string | undefined
 
   /** The iframe's accessible name. */
@@ -46,6 +49,17 @@ export interface SUQOCheckoutProps {
 
   /** A load deadline expired. The failure panel renders regardless; this is for telemetry. */
   onLoadError?: ((error: LoadError) => void) | undefined
+
+  /**
+   * The frame wants a bank/wallet deeplink (`intent://…`, `fonepayApp://…`) handed off to a
+   * native app, rather than attempting the navigation itself — it is sandboxed and cannot
+   * move your top-level page. This component never navigates on it; what you do —
+   * typically `location.href = url` — is entirely your own code's call.
+   *
+   * `javascript:`/`data:`/`file:`/`blob:` are refused before they would ever reach this
+   * handler. Not a payment outcome, so `onFailure` does not also fire.
+   */
+  onIntent?: ((url: string) => void) | undefined
 }
 
 /**
@@ -87,6 +101,7 @@ const MIN_FRAME_HEIGHT = 320
  */
 export function SUQOCheckout({
   id,
+  mode,
   origin,
   title = 'SUQO — Secure payment',
   className,
@@ -96,13 +111,21 @@ export function SUQOCheckout({
   onFailure,
   onUnavailable,
   onLoadError,
+  onIntent,
 }: SUQOCheckoutProps): ReactElement {
-  const resolvedOrigin = useMemo(() => normaliseOrigin(origin), [origin])
+  const resolvedOrigin = useMemo(() => normaliseOrigin(origin, mode), [origin, mode])
   const instanceKey = `${resolvedOrigin}|${id}`
 
   // The ref object is stable; the functions inside it are not. That is what lets a merchant
   // write inline arrow functions without remounting the frame on every render.
-  const handlers = useLatest({ onReady, onSuccess, onFailure, onUnavailable, onLoadError })
+  const handlers = useLatest({
+    onReady,
+    onSuccess,
+    onFailure,
+    onUnavailable,
+    onLoadError,
+    onIntent,
+  })
 
   const [phase, setPhase] = useState<HostPhase>({ name: 'loading' })
   const iframeRef = useRef<HTMLIFrameElement | null>(null)

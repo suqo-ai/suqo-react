@@ -21,6 +21,7 @@ export type InboundMessage =
   | { type: 'suqo:resize'; height: number }
   | { type: 'suqo:gateway' }
   | { type: 'suqo:redirect'; url: string }
+  | { type: 'suqo:intent'; url: string }
   | { type: 'suqo:unavailable'; reason: UnavailableReason }
   | { type: 'suqo:result'; status: ResultStatus; params: ResultParams; message?: string }
 
@@ -78,6 +79,16 @@ export function parseMessage(data: unknown): InboundMessage | null {
       const url = envelope['url']
       if (typeof url !== 'string' || url === '') return null
       return { type: 'suqo:redirect', url }
+    }
+
+    case 'suqo:intent': {
+      // The frame is asking to hand a bank/wallet deeplink to the merchant, rather than
+      // attempting the navigation itself — it is sandboxed and cannot move the top-level
+      // page (see `intent.ts`). No origin check here: unlike `suqo:redirect`, there is
+      // nothing to compare the url against, since it is never navigated to from this side.
+      const url = envelope['url']
+      if (typeof url !== 'string' || url === '') return null
+      return { type: 'suqo:intent', url }
     }
 
     case 'suqo:unavailable': {

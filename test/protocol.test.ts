@@ -61,6 +61,23 @@ describe('suqo:redirect', () => {
   })
 })
 
+describe('suqo:intent', () => {
+  it('takes a url', () => {
+    expect(parseMessage(envelope({ type: 'suqo:intent', url: 'intent://payment/x' }))).toEqual({
+      type: 'suqo:intent',
+      url: 'intent://payment/x',
+    })
+  })
+
+  it.each([
+    ['empty', ''],
+    ['missing', undefined],
+    ['a non-string', 42],
+  ])('drops a %s url', (_label, url) => {
+    expect(parseMessage(envelope({ type: 'suqo:intent', url }))).toBeNull()
+  })
+})
+
 describe('suqo:unavailable', () => {
   it.each(['not-found', 'expired', 'spent', 'no-customer', 'no-methods', 'load-failed'])(
     'round-trips %s',

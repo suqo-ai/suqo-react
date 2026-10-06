@@ -94,6 +94,23 @@ different one from Instagram than from their desktop.
 | `onFailure`           | `(status, params, message?) => void` | Exactly once per attempt. `'cancelled' \| 'failed'`                           |
 | `onUnavailable`       | `(reason) => void`                   | The session cannot be paid at all. **Not** a payment outcome                  |
 | `onLoadError`         | `(error) => void`                    | A load deadline expired. The failure panel renders regardless                 |
+| `onIntent`            | `(url) => void`                      | A bank/wallet deeplink — see below. **We never navigate on it**               |
+
+### `onIntent` — a bank-app deeplink, handed to you verbatim
+
+Some gateways hand off to a bank or wallet app through a non-`http(s)` deeplink
+(`intent://…`, `fonepayApp://…`). The frame can't navigate your page to one itself — it's
+sandboxed so it can't move your top-level page at all — so it only asks: `onIntent(url)`
+fires with the raw deeplink, and **this component never navigates anywhere on it
+itself.** What you do next — typically `location.href = url`, in your own page — is your
+own code's call.
+
+`javascript:`, `data:`, `file:` and `blob:` are refused before they'd ever reach your
+handler. Everything else passes through exactly as the gateway sent it, same as `params`
+does.
+
+No `onIntent` configured? Nothing breaks — the console gets a warning and the buyer is
+left exactly where they'd be without this feature, not stuck on a dead spinner.
 
 ### `onUnavailable` is not a failure
 

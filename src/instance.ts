@@ -1,6 +1,7 @@
 import { createDeadlines, READY_DEADLINE_MS, type Deadlines } from './deadlines'
 import { diagnose } from './diagnose'
 import { closeGatewayWindow } from './gateway'
+import { validateIntentUrl } from './intent'
 import { navigateTopLevel, validateRedirectUrl } from './navigate'
 import type { InboundMessage } from './protocol'
 import { register, unregister } from './registry'
@@ -27,6 +28,12 @@ export interface HostHandlers {
   onFailure?: ((status: FailureStatus, params: ResultParams, message?: string) => void) | undefined
   onUnavailable?: ((reason: UnavailableReason) => void) | undefined
   onLoadError?: ((error: LoadError) => void) | undefined
+  /**
+   * A bank/wallet deeplink the frame wants handed off, rather than navigating to itself —
+   * it is sandboxed and cannot move the top-level page. This package never navigates on it;
+   * what happens next is the merchant's own code's call.
+   */
+  onIntent?: ((url: string) => void) | undefined
 }
 
 export type HostPhase =
@@ -276,6 +283,22 @@ export function createHostInstance(options: HostInstanceOptions): HostInstance {
           // No callback fires here. The merchant's document is about to be destroyed, and
           // `onFailure` would report a failure that did not happen.
           navigateTopLevel(href)
+          return
+        }
+
+        case 'suqo:intent': {
+          const url = validateIntentUrl(message.url)
+          if (url === null) return
+
+          const onIntent = options.handlers.current.onIntent
+          if (onIntent) {
+            onIntent(url)
+          } else {
+            warn(
+              `the checkout wants to hand off to ${url}, but no onIntent was configured — ` +
+                'pass one to let the buyer reach their bank app.'
+            )
+          }
           return
         }
 

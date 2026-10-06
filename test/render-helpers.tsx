@@ -10,6 +10,7 @@ export const handlerSpies = () => ({
   onFailure: vi.fn(),
   onUnavailable: vi.fn(),
   onLoadError: vi.fn(),
+  onIntent: vi.fn(),
 })
 
 /** The rendered iframe. There is exactly one per mounted block. */

@@ -7,6 +7,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `onIntent` prop and `suqo:intent` message: the frame can now ask this package to hand a
+  bank/wallet deeplink (`intent://…`, `fonepayApp://…`) to your own code instead of
+  attempting the navigation itself, which its sandbox never allowed. This package never
+  navigates on it — only `javascript:`/`data:`/`file:`/`blob:` are refused, everything
+  else passes through verbatim. Matches `js-checkout`'s `onIntent` (shipped the same way
+  there) and `suqo-react-native`, which explicitly drops this message as a no-op since its
+  WebView already handles deeplinks through navigation interception.
+
 ## [0.1.0]
 
 ### Added

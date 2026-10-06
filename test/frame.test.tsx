@@ -77,6 +77,41 @@ describe('unavailable', () => {
   })
 })
 
+describe('intent', () => {
+  it('hands the url to onIntent verbatim and touches nothing else', () => {
+    const go = vi.spyOn(navigate, 'navigateTopLevel').mockImplementation(() => {})
+    const handlers = handlerSpies()
+    render(<SUQOCheckout id="cks_a" origin={ORIGIN} {...handlers} />)
+
+    act(() => post({ type: 'suqo:intent', url: 'intent://payment/x' }))
+
+    expect(handlers.onIntent).toHaveBeenCalledWith('intent://payment/x')
+    expect(handlers.onFailure).not.toHaveBeenCalled()
+    expect(handlers.onSuccess).not.toHaveBeenCalled()
+    // Unlike suqo:redirect, this package never navigates on it itself.
+    expect(go).not.toHaveBeenCalled()
+  })
+
+  it('does not reach onIntent when the scheme is refused', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const handlers = handlerSpies()
+    render(<SUQOCheckout id="cks_a" origin={ORIGIN} {...handlers} />)
+
+    act(() => post({ type: 'suqo:intent', url: 'javascript:alert(1)' }))
+
+    expect(handlers.onIntent).not.toHaveBeenCalled()
+  })
+
+  it('warns instead of failing silently when no onIntent is configured', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    render(<SUQOCheckout id="cks_a" origin={ORIGIN} />)
+
+    act(() => post({ type: 'suqo:intent', url: 'intent://payment/x' }))
+
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('intent://payment/x'))
+  })
+})
+
 describe('redirect', () => {
   it('navigates the top-level page to a same-origin url', () => {
     const go = vi.spyOn(navigate, 'navigateTopLevel').mockImplementation(() => {})
