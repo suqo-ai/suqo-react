@@ -2,7 +2,8 @@
 
 export { SUQOCheckout } from './SUQOCheckout'
 export type { SUQOCheckoutProps } from './SUQOCheckout'
-export { DEFAULT_ORIGIN } from './urls'
+export { DEFAULT_ORIGIN, LIVE_ORIGIN, SANDBOX_ORIGIN, normaliseOrigin } from './urls'
+export type { CheckoutMode } from './urls'
 export type {
   FailureStatus,
   LoadError,

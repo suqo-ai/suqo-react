@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
-import { DEFAULT_ORIGIN, frameUrl, hostedCheckoutUrl, normaliseOrigin } from '../src/urls'
+import {
+  DEFAULT_ORIGIN,
+  frameUrl,
+  hostedCheckoutUrl,
+  LIVE_ORIGIN,
+  normaliseOrigin,
+  SANDBOX_ORIGIN,
+} from '../src/urls'
 
 const MERCHANT = 'https://merchant.example'
 
@@ -19,6 +26,17 @@ describe('normaliseOrigin', () => {
     // The URL parser tolerates a stray space; string concatenation does not.
     expect(normaliseOrigin('  https://pay.suqo.ai  ')).toBe('https://pay.suqo.ai')
     expect(normaliseOrigin('   ')).toBe(DEFAULT_ORIGIN)
+  })
+
+  it('picks the origin for `mode` when no explicit origin is given', () => {
+    expect(normaliseOrigin(undefined, 'live')).toBe(LIVE_ORIGIN)
+    expect(normaliseOrigin(undefined, 'sandbox')).toBe(SANDBOX_ORIGIN)
+    expect(normaliseOrigin(undefined, undefined)).toBe(SANDBOX_ORIGIN)
+  })
+
+  it('lets an explicit origin override `mode`', () => {
+    expect(normaliseOrigin('https://pay.suqo.ai', 'live')).toBe('https://pay.suqo.ai')
+    expect(normaliseOrigin('  ', 'live')).toBe(LIVE_ORIGIN)
   })
 })
 

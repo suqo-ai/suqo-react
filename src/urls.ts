@@ -5,22 +5,46 @@
  * every one of these be unit-tested and what keeps the module importable on a server.
  */
 
+/** Where a live checkout is served from. */
+export const LIVE_ORIGIN = 'https://app.suqo.ai'
+
+/** Where a sandbox checkout is served from. */
+export const SANDBOX_ORIGIN = 'https://test.suqo.ai'
+
 /**
  * Where the checkout is served from when the merchant names no origin.
  *
  * The vanilla loader derives this from its own `<script src>`; a bundled package has no
  * script tag, so a compiled-in constant is the only option. Exported so the value is
  * greppable rather than folklore.
+ *
+ * @deprecated Equal to {@link SANDBOX_ORIGIN}. Prefer the `mode` prop.
  */
-export const DEFAULT_ORIGIN = 'https://test.suqo.ai'
+export const DEFAULT_ORIGIN = SANDBOX_ORIGIN
 
-/** Trims surrounding whitespace and trailing slashes; falls back to {@link DEFAULT_ORIGIN}. */
-export function normaliseOrigin(value: string | undefined): string {
-  if (typeof value !== 'string') return DEFAULT_ORIGIN
-  // Whitespace as well as slashes: these arrive from JSX props and env vars, and a stray
-  // space survives into the URL string even though the URL parser tolerates it.
-  const trimmed = value.replace(/^\s+|\s+$/g, '').replace(/\/+$/, '')
-  return trimmed === '' ? DEFAULT_ORIGIN : trimmed
+/** The two checkout environments a merchant can pick between without naming a URL. */
+export type CheckoutMode = 'live' | 'sandbox'
+
+function originForMode(mode: CheckoutMode | undefined): string {
+  return mode === 'live' ? LIVE_ORIGIN : SANDBOX_ORIGIN
+}
+
+/**
+ * Resolves the checkout origin.
+ *
+ * An explicit `origin` always wins — it is how a merchant points at something other than
+ * `app.suqo.ai` / `test.suqo.ai` (a staging mirror, a proxy). Otherwise `mode` picks between
+ * {@link LIVE_ORIGIN} and {@link SANDBOX_ORIGIN}, defaulting to sandbox so an integration that
+ * names neither cannot accidentally take a live payment.
+ */
+export function normaliseOrigin(origin: string | undefined, mode?: CheckoutMode): string {
+  if (typeof origin === 'string') {
+    // Whitespace as well as slashes: these arrive from JSX props and env vars, and a stray
+    // space survives into the URL string even though the URL parser tolerates it.
+    const trimmed = origin.replace(/^\s+|\s+$/g, '').replace(/\/+$/, '')
+    if (trimmed !== '') return trimmed
+  }
+  return originForMode(mode)
 }
 
 /**
