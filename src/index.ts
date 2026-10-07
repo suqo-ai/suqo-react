@@ -12,5 +12,8 @@ export type {
   UnavailableReason,
 } from './types'
 
-/** This package's version, as published. Hand-synced with package.json. */
-export const VERSION = '0.1.0'
+/**
+ * This package's version, as published. The release PR keeps it equal to package.json
+ * (scripts/sync-version.mjs), and test/version.test.ts fails if they disagree.
+ */
+export const VERSION = '0.0.1'
