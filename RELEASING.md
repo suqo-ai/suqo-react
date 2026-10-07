@@ -13,7 +13,8 @@ conventional commits, land on `main` through a release PR, and are published to 
 | `feat!: …`, or a `BREAKING CHANGE:` footer    | major (0.0.1 → 1.0.0) |
 | `docs:`, `chore:`, `test:`, `refactor:`, etc. | no release            |
 
-A breaking change goes straight to 1.0.0, even while the version is below 1.0.
+A breaking change goes straight to 1.0.0, even while the version is below 1.0. Commits are parsed
+with the [Conventional Commits](https://www.conventionalcommits.org/) preset (`.releaserc.json`).
 
 ## Every release
 
@@ -21,7 +22,9 @@ A breaking change goes straight to 1.0.0, even while the version is below 1.0.
 2. The Release workflow opens (or updates) a `bump-release/vX.Y.Z` PR with the version bump and
    the new `CHANGELOG.md` section.
 3. That PR doesn't start CI by itself, because it was opened with `GITHUB_TOKEN`. Push an empty
-   commit to it, or close and reopen it, then merge once it's green.
+   commit to it, or close and reopen it, then merge once it's green. Later merges to `main` leave
+   the PR's branch alone unless the release itself changes (a new `feat:`/`fix:`), so your nudge
+   isn't wiped by an unrelated merge. When it does change, nudge again.
 4. The merge tags `vX.Y.Z` (on the merge commit, even if more PRs land right after), creates the
    GitHub Release and stages the package on npm.
 5. Approve the staged version with 2FA: `npm stage approve <stage-id>` (the id is in the
@@ -30,9 +33,13 @@ A breaking change goes straight to 1.0.0, even while the version is below 1.0.
 
 ## If a release run fails
 
-Use **"Re-run failed jobs"** on that run. Each step checks what already exists (the tag on the
-remote, the GitHub Release, the version on npm) and only does what's missing, and a re-run is
-allowed to publish to npm. Don't delete the tag to retry.
+Use **"Re-run failed jobs"** on that run. Each job checks what already exists (the tag on the
+remote, the GitHub Release, the version on npm) and only does what's missing. Don't delete the tag
+to retry.
+
+The GitHub Release and the npm publish are separate jobs, so one failing doesn't block the other or
+the next release PR. Only the run that created the tag may publish to npm (its run id is in the tag
+message), so re-run **that** run. Re-running a later run, or pushing more commits, won't publish.
 
 If the version is staged but not approved yet, a re-run stages it again. Approve or reject the
 first one instead of re-running.
@@ -42,6 +49,8 @@ first one instead of re-running.
 `release.yml` pins npm (`NPM_VERSION`) and semantic-release (`SEMANTIC_RELEASE_PACKAGES`) on
 purpose: those jobs hold a write token or the npm publish credential. Bump them deliberately.
 semantic-release isn't a devDependency, because it needs Node 22 and this package supports 18.
+Keep `conventional-changelog-conventionalcommits` on the major that matches the plugins'
+conventional-changelog libraries (9.x for the current pins).
 
 ## One-time bootstrap: 0.0.1
 

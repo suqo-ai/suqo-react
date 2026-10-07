@@ -2,14 +2,27 @@
 # Pre-push gate. Installed into .git/hooks/ by scripts/install-git-hooks.mjs (the "prepare"
 # script) -- this file is the tracked source of truth, not .git/hooks/pre-push.
 
-# main is PR-only: the release train opens release PRs against it and tags what gets merged.
 # stdin is one line per ref being pushed: <local ref> <local sha> <remote ref> <remote sha>
+pushes_code=false
 while read -r local_ref local_sha remote_ref remote_sha; do
+  # main is PR-only: the release train opens release PRs against it and tags what gets merged.
   if [ "$remote_ref" = "refs/heads/main" ]; then
     echo "pre-push: pushing to main is blocked. Use a branch and open a PR."
     exit 1
   fi
+  # Only a branch update sends code. A deletion has an all-zero local sha, and tags aren't gated.
+  case "$remote_ref" in
+    refs/heads/*)
+      case "$local_sha" in
+        *[!0]*) pushes_code=true ;;
+      esac
+      ;;
+  esac
 done
+
+if [ "$pushes_code" = false ]; then
+  exit 0
+fi
 
 # The same checks CI runs, so a failure costs a re-push rather than a red PR.
 set -e
