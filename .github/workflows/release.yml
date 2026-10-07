@@ -2,11 +2,12 @@
 # (ported from suqo-sdk-ts). main is PR-only, so nothing here pushes to main. On every push to main:
 #
 #   1. tag-release: makes sure package.json's version is tagged. The tag goes on the commit that set
-#      that version, not on HEAD (see "Which commit gets tagged"). Also decides whether to publish.
+#      that version, not on HEAD (see "Which commit gets tagged"). It does nothing else, so nothing
+#      unrelated (npm, GitHub Releases) can stop the jobs below from running.
 #   Then, independently, so one failing doesn't hold up the others:
 #   2. github-release: creates the GitHub Release for that tag if it's missing.
-#   3. npm-publish: when the version isn't on npm and this run created the tag (see "Re-runs").
-#      Re-runs the gate on the tagged commit, then stages the package (see "Auth").
+#   3. npm-check → npm-publish: publish when the version isn't on npm and this run created the tag
+#      (see "Re-runs"). Re-runs the gate on the tagged commit, then stages the package (see "Auth").
 #   4. prepare-release-pr: computes the next version from conventional commits with semantic-release
 #      in dry-run mode (scripts/compute-release.mjs; a real run would tag main before review),
 #      applies the bump and changelog, and opens a bump-release/vX.Y.Z PR into main. No-ops if
@@ -28,18 +29,23 @@
 # Auth: npm Trusted Publishing (OIDC). No token, and `npm stage publish`, so nothing goes live until
 # a human approves it with 2FA (`npm stage approve <stage-id>`, the id is in the "Publish to npm
 # (staged)" step log, or the "Staged Packages" tab on npmjs.com). Needs a trusted publisher on
-# npmjs.com: org "suqo-ai", repo "suqo-react", workflow "release.yml", direct publish UNCHECKED
-# (stage-only).
+# npmjs.com: org "suqo-ai", repo "suqo-react", workflow "release.yml", direct publish
+# UNCHECKED (stage-only).
 #
 # npm only allows registering a trusted publisher on a package that already exists, and @suqo
 # doesn't allow tokens that bypass 2FA, so 0.0.1 was published by hand with `npm publish` and an OTP.
-# When its release commit merged, tag-release tagged it and npm-publish skipped it as already on
-# npm. RELEASING.md has the steps.
+# When its release commit merged, tag-release tagged it and npm-check skipped it as already on npm.
+# RELEASING.md has the steps.
 #
-# Known limitation, same as in suqo: the release PR is opened with GITHUB_TOKEN, so it doesn't start
-# CI. Nudge it (push an empty commit, or close and reopen the PR) before merging. Later pushes to
-# main leave the PR branch alone unless the release itself changed, so a nudge isn't wiped by an
-# unrelated merge.
+# Known limitations:
+#  - Same as in suqo: the release PR is opened with GITHUB_TOKEN, so it doesn't start CI. Nudge it
+#    (push an empty commit, or close and reopen the PR) before merging. Later pushes to main leave
+#    the PR branch alone unless the release itself changed (its version or its notes), so a nudge
+#    isn't wiped by an unrelated merge.
+#  - A releasable commit that lands on main while the release PR is open is only in that release's
+#    notes once this workflow has rebuilt the PR. Merging the PR before then ships the commit
+#    without listing it. GitHub's "Require branches to be up to date before merging" rule on main
+#    closes that gap (RELEASING.md).
 
 name: Release
 
@@ -79,7 +85,6 @@ jobs:
       version: ${{ steps.tag.outputs.version }}
       tag: ${{ steps.tag.outputs.tag }}
       sha: ${{ steps.tag.outputs.sha }}
-      publish: ${{ steps.npm.outputs.publish }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -121,40 +126,6 @@ jobs:
           fi
           echo "Tagged $SHA as $TAG."
 
-      - name: Decide whether to publish to npm
-        id: npm
-        env:
-          VERSION: ${{ steps.tag.outputs.version }}
-          TAG: ${{ steps.tag.outputs.tag }}
-        run: |
-          # Read the remote tag's message (forced: a local tag from a lost race may differ).
-          git fetch -q -f origin "refs/tags/$TAG:refs/tags/$TAG"
-          if ! git for-each-ref --format='%(contents)' "refs/tags/$TAG" | grep -qF "(release run ${GITHUB_RUN_ID})"; then
-            echo "Tag $TAG was created by another run — not publishing from this one."
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # Only a 404 means "not on npm". Any other failure (network, registry error) fails the job
-          # rather than being read as "not published".
-          NAME=$(node -p "require('./package.json').name")
-          if FOUND=$(npm view "${NAME}@${VERSION}" version 2>npm-view.err); then
-            :
-          elif grep -q E404 npm-view.err; then
-            FOUND=""
-          else
-            cat npm-view.err >&2
-            echo "::error::Couldn't check npm for ${NAME}@${VERSION}"
-            exit 1
-          fi
-
-          if [ -n "$FOUND" ]; then
-            echo "::notice::${NAME}@${VERSION} is already on npm — skipping the npm publish."
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "publish=true" >> "$GITHUB_OUTPUT"
-          fi
-
   github-release:
     name: GitHub Release
     needs: tag-release
@@ -182,10 +153,55 @@ jobs:
           git show "$SHA:CHANGELOG.md" | node scripts/release-notes.mjs "$VERSION" > .release-notes.md
           gh release create "$TAG" --verify-tag --title "$TAG" --notes-file .release-notes.md
 
+  # Its own job, not a step of tag-release, so an npm registry error here can't stop the release PR.
+  npm-check:
+    name: Decide whether to publish to npm
+    needs: tag-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      publish: ${{ steps.npm.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag's run and npm
+        id: npm
+        env:
+          VERSION: ${{ needs.tag-release.outputs.version }}
+          TAG: ${{ needs.tag-release.outputs.tag }}
+        run: |
+          # Only the run that created the tag publishes (see "Re-runs").
+          git fetch -q origin "refs/tags/$TAG:refs/tags/$TAG"
+          if ! git for-each-ref --format='%(contents)' "refs/tags/$TAG" | grep -qF "(release run ${GITHUB_RUN_ID})"; then
+            echo "Tag $TAG was created by another run — not publishing from this one."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Only a 404 means "not on npm". Any other failure (network, registry error) fails the job
+          # rather than being read as "not published".
+          NAME=$(node -p "require('./package.json').name")
+          if FOUND=$(npm view "${NAME}@${VERSION}" version 2>npm-view.err); then
+            :
+          elif grep -q E404 npm-view.err; then
+            FOUND=""
+          else
+            cat npm-view.err >&2
+            echo "::error::Couldn't check npm for ${NAME}@${VERSION}"
+            exit 1
+          fi
+
+          if [ -n "$FOUND" ]; then
+            echo "::notice::${NAME}@${VERSION} is already on npm — skipping the npm publish."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
   npm-publish:
     name: Publish to npm
-    needs: tag-release
-    if: needs.tag-release.outputs.publish == 'true'
+    needs: [tag-release, npm-check]
+    if: needs.npm-check.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -285,10 +301,6 @@ jobs:
         run: |
           BRANCH="bump-release/v${VERSION}"
 
-          npm version "$VERSION" --no-git-tag-version --allow-same-version --ignore-scripts
-          cp .next-notes.md .pr-body.md
-          node scripts/clean-changelogs.mjs "$VERSION"
-
           # Close release PRs from earlier cycles: they computed a version that didn't include the
           # newer commits.
           gh pr list --state open --json number,headRefName \
@@ -301,19 +313,28 @@ jobs:
           # Query open PRs explicitly: gh pr view/edit match closed PRs on the same branch too.
           PR_NUMBER=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
 
-          # If the open PR already carries exactly this release (same version, lockfile and
-          # changelog), leave its branch alone. Rebuilding it on every push to main would force-push
-          # away the commit someone pushed to start CI (see the header).
-          RELEASE_FILES="package.json package-lock.json CHANGELOG.md CHANGELOG_ARCHIVE.md"
+          # If the open PR already carries this release, leave its branch alone: rebuilding it on
+          # every push to main would force-push away the commit someone pushed to start CI. "This
+          # release" is the version (it's in the branch name) plus its notes, compared without the
+          # date semantic-release stamps into the heading. Other files are deliberately not
+          # compared: a dependency bump or refactor on main reaches the release when the PR merges.
           if [ -n "$PR_NUMBER" ] &&
             git fetch -q origin "refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" &&
-            git diff --quiet "origin/$BRANCH" -- $RELEASE_FILES; then
-            echo "Release PR #$PR_NUMBER already has v${VERSION} as computed — leaving it alone."
+            git show "origin/$BRANCH:CHANGELOG.md" | node scripts/release-notes.mjs --normalized "$VERSION" > .pr-notes.txt &&
+            node scripts/release-notes.mjs --normalized "$VERSION" < .next-notes.md > .new-notes.txt &&
+            cmp -s .pr-notes.txt .new-notes.txt; then
+            echo "Release PR #$PR_NUMBER already has v${VERSION} with the same notes — leaving it alone."
             exit 0
           fi
 
+          npm version "$VERSION" --no-git-tag-version --allow-same-version --ignore-scripts
+          # src/index.ts's VERSION and example/package-lock.json record the version too.
+          node scripts/sync-version.mjs
+          cp .next-notes.md .pr-body.md
+          node scripts/clean-changelogs.mjs "$VERSION"
+
           git checkout -b "$BRANCH"
-          git add package.json package-lock.json CHANGELOG.md
+          git add package.json package-lock.json src/index.ts example/package-lock.json CHANGELOG.md
           if [ -f CHANGELOG_ARCHIVE.md ]; then git add CHANGELOG_ARCHIVE.md; fi
           git commit -m "chore(release): ${VERSION}"
           git push -u origin "$BRANCH" --force
