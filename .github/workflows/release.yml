@@ -1,41 +1,236 @@
-# Publishes on a `v*.*.*` tag, after re-running the full gate.
+# Release train: PR-gated semantic-release (ported from the suqo repo) plus a staged npm publish
+# (ported from suqo-sdk-ts). main is PR-only, so nothing here pushes to main. On every push to main:
 #
-# Two prerequisites outside this file, both of which will fail the run if unmet:
-#  - the `@suqo` npm scope must exist and be owned by the org
-#  - the publishing account needs 2FA set to "Authorization and Publishing" for provenance
+#   1. tag-release: if package.json's version has no git tag yet (i.e. a release PR just merged),
+#      tags that commit and creates the GitHub Release from the top CHANGELOG.md section.
+#   2. npm-publish: only when (1) created a tag and that version isn't on npm yet. Re-runs the gate
+#      on the tagged commit, then stages the package on npm (see "Auth" below).
+#   3. prepare-release-pr: computes the next version from conventional commits with semantic-release
+#      in dry-run mode (scripts/compute-release.mjs; a real run would tag main before review),
+#      applies the bump and changelog, and opens a bump-release/vX.Y.Z PR into main. No-ops if
+#      nothing is releasable. Runs after (1) so a tag that just landed counts as the last release.
+#
+# Why one workflow and not a separate tag-triggered release.yml as in suqo-sdk-ts: the tag is
+# pushed with GITHUB_TOKEN, and GitHub never starts other workflows from GITHUB_TOKEN pushes.
+#
+# Auth: npm Trusted Publishing (OIDC). No token, and `npm stage publish`, so nothing goes live until
+# a human approves it with 2FA (`npm stage approve <stage-id>`, the id is in the "Publish to npm
+# (staged)" step log, or the "Staged Packages" tab on npmjs.com). Needs a trusted publisher on
+# npmjs.com: org "suqo-ai", repo "suqo-react", workflow "release.yml", direct publish UNCHECKED
+# (stage-only).
+#
+# npm only allows registering a trusted publisher on a package that already exists, and @suqo
+# doesn't allow tokens that bypass 2FA, so 0.0.1 was published by hand with `npm publish` and an OTP.
+# When its release commit merged, tag-release tagged it and npm-publish skipped it as already on
+# npm. RELEASING.md has the steps.
+#
+# Known limitation, same as in suqo: the release PR is opened with GITHUB_TOKEN, so it doesn't start
+# CI. Nudge it (push an empty commit, or close and reopen the PR) before merging.
+
 name: Release
 
 on:
   push:
-    tags: ['v*.*.*']
+    branches: [main]
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
-  publish:
+  tag-release:
+    name: Tag release (tag + GitHub Release)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    # Serialize so two pushes to main can't both pass the tag-existence check before either pushes.
+    concurrency:
+      group: release-tag
+      cancel-in-progress: false
+    outputs:
+      tagged: ${{ steps.tag.outputs.tagged }}
+      tag: ${{ steps.tag.outputs.tag }}
+      on_npm: ${{ steps.tag.outputs.on_npm }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          fetch-depth: 0
+
+      - name: Tag and create the GitHub Release if this version is untagged
+        id: tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v${VERSION}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists — nothing to release."
+            echo "tagged=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          node -e "
+            const fs = require('fs');
+            const lines = fs.readFileSync('CHANGELOG.md', 'utf8').split('\n');
+            // Release headings only: '#' or '##' plus a version, not '### Features' or '# Changelog'.
+            const HEADING = /^#{1,2} .*\d+\.\d+\.\d+/;
+            const start = lines.findIndex((l) => HEADING.test(l));
+            let end = lines.length;
+            for (let i = start + 1; i < lines.length; i++) {
+              if (HEADING.test(lines[i])) { end = i; break; }
+            }
+            fs.writeFileSync('.release-notes.md', lines.slice(start, end).join('\n').trim() + '\n');
+          "
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "$TAG"
+
+          if ! git push origin "$TAG"; then
+            git fetch --tags origin
+            if git rev-parse "$TAG" >/dev/null 2>&1; then
+              echo "Tag $TAG was pushed by a concurrent run — nothing to do."
+              echo "tagged=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Failed to push tag $TAG for a reason other than a race."
+            exit 1
+          fi
+
+          gh release create "$TAG" --title "$TAG" --notes-file .release-notes.md
+          echo "tagged=true" >> "$GITHUB_OUTPUT"
+
+          # A version can already be on npm if it was published by hand (0.0.1 was: see the header).
+          # Publishing it again would fail, so let npm-publish skip it. A 404 (package or version
+          # not there yet) means publish.
+          if npm view "$(node -p "require('./package.json').name")@${VERSION}" version 2>/dev/null | grep -q .; then
+            echo "::notice::${VERSION} is already on npm — skipping the npm publish."
+            echo "on_npm=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "on_npm=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  npm-publish:
+    name: Publish to npm
+    needs: tag-release
+    if: needs.tag-release.outputs.tagged == 'true' && needs.tag-release.outputs.on_npm != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      # GitHub mints the OIDC token npm exchanges for a short-lived publish credential.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.tag-release.outputs.tag }}
+
+      # v6 specifically: earlier setup-node versions predate trusted publishing.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
           cache: npm
           registry-url: https://registry.npmjs.org
+
+      # Trusted publishing and `npm stage` need a newer npm than Node 22 may bundle.
+      - run: npm install -g npm@latest
+
       - run: npm ci
+
+      # Same gate as CI, re-run on exactly the commit being published.
       - run: npm run typecheck
       - run: npm test
       - run: npm run lint
       - run: npm run build
+      - run: npm run check:dist
+
       - name: Verify the tag matches package.json
+        env:
+          TAG: ${{ needs.tag-release.outputs.tag }}
         run: |
-          TAG="${GITHUB_REF_NAME#v}"
           PKG="$(node -p "require('./package.json').version")"
-          if [ "$TAG" != "$PKG" ]; then
-            echo "tag $TAG does not match package.json $PKG" >&2
+          if [ "${TAG#v}" != "$PKG" ]; then
+            echo "::error::tag $TAG does not match package.json $PKG"
             exit 1
           fi
-      - run: npm publish --access public --provenance
+
+      # `stage publish`, not `publish`: the trusted publisher is registered stage-only. No token and
+      # no OTP here; 2FA happens at approval time.
+      # --provenance stays explicit: OIDC is documented to add it automatically, but that hasn't
+      # held reliably in practice.
+      - name: Publish to npm (staged)
+        run: |
+          npm stage publish --access public --provenance
+          echo "::notice::Staged, not live. Approve it with 'npm stage approve <stage-id>' or on npmjs.com."
+
+  prepare-release-pr:
+    name: Prepare release PR
+    needs: tag-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      # Checked out after tag-release, so a tag it just pushed is fetched here and counts as the
+      # latest release.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # semantic-release 25 needs Node ^22.14.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Compute next release (dry-run — no tag, no push)
+        id: release
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/compute-release.mjs
+
+      - name: Open or update the release PR
+        if: steps.release.outputs.released == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          BRANCH="bump-release/v${VERSION}"
+
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+          cp .next-notes.md .pr-body.md
+          node scripts/clean-changelogs.mjs "$VERSION"
+
+          git checkout -b "$BRANCH"
+          git add package.json package-lock.json CHANGELOG.md
+          if [ -f CHANGELOG_ARCHIVE.md ]; then git add CHANGELOG_ARCHIVE.md; fi
+          git commit -m "chore(release): ${VERSION}"
+          git push -u origin "$BRANCH" --force
+
+          # Close release PRs from earlier cycles: they computed a version that didn't include the
+          # newer commits.
+          gh pr list --state open --json number,headRefName \
+            --jq ".[] | select(.headRefName | startswith(\"bump-release/\")) | select(.headRefName != \"$BRANCH\") | .number" |
+          while read -r stale; do
+            gh pr close "$stale" --delete-branch \
+              --comment "Superseded by a newer release-train cycle (${BRANCH})."
+          done
+
+          # Query open PRs explicitly: gh pr view/edit match closed PRs on the same branch too.
+          PR_NUMBER=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$PR_NUMBER" ]; then
+            gh pr edit "$PR_NUMBER" --title "chore(release): v${VERSION}" --body-file .pr-body.md
+          else
+            gh pr create --base main --head "$BRANCH" \
+              --title "chore(release): v${VERSION}" --body-file .pr-body.md
+          fi

@@ -1,0 +1,32 @@
+#!/bin/sh
+# Pre-push gate. Installed into .git/hooks/ by scripts/install-git-hooks.mjs (the "prepare"
+# script) -- this file is the tracked source of truth, not .git/hooks/pre-push.
+
+# main is PR-only: the release train opens release PRs against it and tags what gets merged.
+# stdin is one line per ref being pushed: <local ref> <local sha> <remote ref> <remote sha>
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [ "$remote_ref" = "refs/heads/main" ]; then
+    echo "pre-push: pushing to main is blocked. Use a branch and open a PR."
+    exit 1
+  fi
+done
+
+# The same checks CI runs, so a failure costs a re-push rather than a red PR.
+set -e
+
+echo "pre-push: typecheck"
+npm run --silent typecheck
+
+echo "pre-push: test"
+npm run --silent test
+
+echo "pre-push: lint"
+npm run --silent lint
+
+echo "pre-push: build"
+npm run --silent build
+
+echo "pre-push: check dist"
+npm run --silent check:dist
+
+echo "pre-push: all checks passed"

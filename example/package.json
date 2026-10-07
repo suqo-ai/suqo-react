@@ -1,5 +1,5 @@
 {
-  "name": "react-suqo-checkout-example",
+  "name": "suqo-react-example",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,7 +10,7 @@
   "dependencies": {
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-suqo-checkout": "file:.."
+    "@suqo/react": "file:.."
   },
   "devDependencies": {
     "@types/react": "^18.3.12",

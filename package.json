@@ -1,6 +1,6 @@
 {
-  "name": "react-suqo-checkout",
-  "version": "0.1.0",
+  "name": "@suqo/react",
+  "version": "0.0.1",
   "description": "Collect a SUQO payment in a React app. Renders inline, no gateway integration required.",
   "license": "Apache-2.0",
   "type": "module",
@@ -32,7 +32,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Code-Pros-AI/react-suqo-checkout.git"
+    "url": "git+https://github.com/suqo-ai/suqo-react.git"
   },
   "keywords": [
     "suqo",
@@ -52,6 +52,7 @@
     "lint": "eslint . --ext .ts,.tsx",
     "format": "prettier --write .",
     "check:dist": "node scripts/check-dist.mjs",
+    "prepare": "node scripts/install-git-hooks.mjs",
     "prepublishOnly": "npm run typecheck && npm run test && npm run lint && npm run build && npm run check:dist"
   },
   "peerDependencies": {
@@ -64,6 +65,8 @@
     }
   },
   "devDependencies": {
+    "@semantic-release/commit-analyzer": "^13.0.1",
+    "@semantic-release/release-notes-generator": "^14.1.1",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.0.1",
@@ -77,6 +80,7 @@
     "prettier": "^3.3.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "semantic-release": "^25.0.9",
     "tsup": "^8.3.5",
     "typescript": "^5.6.3",
     "vitest": "^1.6.0"

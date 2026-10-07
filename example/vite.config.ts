@@ -25,11 +25,11 @@ export default defineConfig({
       // after one.
       ...(process.env['EXAMPLE_DIST']
         ? {}
-        : { 'react-suqo-checkout': resolve(import.meta.dirname, '../src/index.ts') }),
+        : { '@suqo/react': resolve(import.meta.dirname, '../src/index.ts') }),
     },
   },
   // esbuild pre-bundling a symlinked source dependency caches a stale copy, and edits then
   // appear not to apply.
-  optimizeDeps: { exclude: ['react-suqo-checkout'] },
+  optimizeDeps: { exclude: ['@suqo/react'] },
   server: { fs: { allow: ['..'] }, port: 4600 },
 })
