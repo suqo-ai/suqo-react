@@ -4,7 +4,8 @@
  * gate without a husky dependency for something this small.
  *
  * Runs from the "prepare" script on `npm install`. No-ops outside a plain git checkout: when this
- * package is installed as a dependency (no .git), or in a worktree (.git is a file there).
+ * package is installed as a dependency (no .git), or in a worktree (.git is a file there). Also
+ * no-ops in CI, where the release workflow pushes a release branch and must not re-run the gate.
  */
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -14,7 +15,12 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 const sourceDir = join(repoRoot, 'hooks')
 const gitDir = join(repoRoot, '.git')
 
-if (!existsSync(sourceDir) || !existsSync(gitDir) || !statSync(gitDir).isDirectory()) {
+if (
+  process.env.CI ||
+  !existsSync(sourceDir) ||
+  !existsSync(gitDir) ||
+  !statSync(gitDir).isDirectory()
+) {
   process.exit(0)
 }
 

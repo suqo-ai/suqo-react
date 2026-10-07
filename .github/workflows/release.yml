@@ -1,10 +1,10 @@
 # Release train: PR-gated semantic-release (ported from the suqo repo) plus a staged npm publish
 # (ported from suqo-sdk-ts). main is PR-only, so nothing here pushes to main. On every push to main:
 #
-#   1. tag-release: if package.json's version has no git tag yet (i.e. a release PR just merged),
-#      tags that commit and creates the GitHub Release from the top CHANGELOG.md section.
-#   2. npm-publish: only when (1) created a tag and that version isn't on npm yet. Re-runs the gate
-#      on the tagged commit, then stages the package on npm (see "Auth" below).
+#   1. tag-release: makes sure package.json's version is tagged and has a GitHub Release. The tag
+#      goes on the commit that set that version, not on HEAD (see "Which commit gets tagged").
+#   2. npm-publish: when (1) just created the tag, or on a re-run, and that version isn't on npm
+#      yet. Re-runs the gate on the tagged commit, then stages the package (see "Auth").
 #   3. prepare-release-pr: computes the next version from conventional commits with semantic-release
 #      in dry-run mode (scripts/compute-release.mjs; a real run would tag main before review),
 #      applies the bump and changelog, and opens a bump-release/vX.Y.Z PR into main. No-ops if
@@ -12,6 +12,13 @@
 #
 # Why one workflow and not a separate tag-triggered release.yml as in suqo-sdk-ts: the tag is
 # pushed with GITHUB_TOKEN, and GitHub never starts other workflows from GITHUB_TOKEN pushes.
+#
+# Which commit gets tagged: the first-parent commit on main that introduced package.json's current
+# version (the release PR's merge). If that run was cancelled or failed, the next push to main
+# still tags the release commit, rather than whatever HEAD is by then.
+#
+# If a release fails partway: re-run the failed run ("Re-run failed jobs"). Every step checks what
+# already exists (tag on the remote, GitHub Release, version on npm) and only does what's missing.
 #
 # Auth: npm Trusted Publishing (OIDC). No token, and `npm stage publish`, so nothing goes live until
 # a human approves it with 2FA (`npm stage approve <stage-id>`, the id is in the "Publish to npm
@@ -36,6 +43,17 @@ on:
 permissions:
   contents: read
 
+env:
+  # Pinned, not @latest: these run in jobs holding a write token or the npm OIDC id-token. Bump
+  # deliberately. npm must be >= 11.5.1 for trusted publishing and have `npm stage`.
+  NPM_VERSION: 12.2.0
+  # Installed only in prepare-release-pr (--no-save), not as devDependencies: semantic-release needs
+  # Node ^22.14 and this package supports Node 18.
+  SEMANTIC_RELEASE_PACKAGES: >-
+    semantic-release@25.0.9
+    @semantic-release/commit-analyzer@13.0.1
+    @semantic-release/release-notes-generator@14.1.1
+
 jobs:
   tag-release:
     name: Tag release (tag + GitHub Release)
@@ -43,79 +61,97 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
-    # Serialize so two pushes to main can't both pass the tag-existence check before either pushes.
+    # Serialize so two runs can't both decide the tag is missing. Cancelling a queued run is safe:
+    # the next run tags the release commit, not its own HEAD.
     concurrency:
       group: release-tag
       cancel-in-progress: false
     outputs:
-      tagged: ${{ steps.tag.outputs.tagged }}
       tag: ${{ steps.tag.outputs.tag }}
-      on_npm: ${{ steps.tag.outputs.on_npm }}
+      sha: ${{ steps.tag.outputs.sha }}
+      publish: ${{ steps.npm.outputs.publish }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Tag and create the GitHub Release if this version is untagged
+      - name: Tag the commit that set package.json's version
         id: tag
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION=$(node -p "require('./package.json').version")
           TAG="v${VERSION}"
+          SHA=$(git log --first-parent -1 --format=%H -S"\"version\": \"${VERSION}\"" -- package.json)
+          if [ -z "$SHA" ]; then
+            echo "::error::Couldn't find the commit on main that set package.json to ${VERSION}"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
 
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "Tag $TAG already exists — nothing to release."
-            echo "tagged=false" >> "$GITHUB_OUTPUT"
+          # Ask the remote, not the local repo: a tag created locally exists whether or not the push
+          # worked.
+          if [ -n "$(git ls-remote --tags origin "refs/tags/$TAG")" ]; then
+            echo "Tag $TAG is already on the remote."
+            echo "created=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          node -e "
-            const fs = require('fs');
-            const lines = fs.readFileSync('CHANGELOG.md', 'utf8').split('\n');
-            // Release headings only: '#' or '##' plus a version, not '### Features' or '# Changelog'.
-            const HEADING = /^#{1,2} .*\d+\.\d+\.\d+/;
-            const start = lines.findIndex((l) => HEADING.test(l));
-            let end = lines.length;
-            for (let i = start + 1; i < lines.length; i++) {
-              if (HEADING.test(lines[i])) { end = i; break; }
-            }
-            fs.writeFileSync('.release-notes.md', lines.slice(start, end).join('\n').trim() + '\n');
-          "
-
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "$TAG" -m "$TAG"
+          git tag -a "$TAG" -m "$TAG" "$SHA"
 
-          if ! git push origin "$TAG"; then
-            git fetch --tags origin
-            if git rev-parse "$TAG" >/dev/null 2>&1; then
-              echo "Tag $TAG was pushed by a concurrent run — nothing to do."
-              echo "tagged=false" >> "$GITHUB_OUTPUT"
+          if ! git push origin "refs/tags/$TAG"; then
+            if [ -n "$(git ls-remote --tags origin "refs/tags/$TAG")" ]; then
+              echo "Tag $TAG was pushed by a concurrent run."
+              echo "created=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
-            echo "Failed to push tag $TAG for a reason other than a race."
+            echo "::error::Failed to push tag $TAG"
             exit 1
           fi
+          echo "Tagged $SHA as $TAG."
+          echo "created=true" >> "$GITHUB_OUTPUT"
 
-          gh release create "$TAG" --title "$TAG" --notes-file .release-notes.md
-          echo "tagged=true" >> "$GITHUB_OUTPUT"
+      - name: Create the GitHub Release if it's missing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.tag.outputs.version }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          SHA: ${{ steps.tag.outputs.sha }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "GitHub Release $TAG already exists."
+            exit 0
+          fi
+          # Notes come from the tagged commit's CHANGELOG.md, for exactly this version.
+          git show "$SHA:CHANGELOG.md" | node scripts/release-notes.mjs "$VERSION" > .release-notes.md
+          gh release create "$TAG" --verify-tag --title "$TAG" --notes-file .release-notes.md
 
-          # A version can already be on npm if it was published by hand (0.0.1 was: see the header).
-          # Publishing it again would fail, so let npm-publish skip it. A 404 (package or version
-          # not there yet) means publish.
-          if npm view "$(node -p "require('./package.json').name")@${VERSION}" version 2>/dev/null | grep -q .; then
-            echo "::notice::${VERSION} is already on npm — skipping the npm publish."
-            echo "on_npm=true" >> "$GITHUB_OUTPUT"
+      # Publish when this run created the tag, or on a re-run (recovering a failed publish), and the
+      # version isn't on npm. Not on every push: a staged version isn't visible to `npm view` until
+      # it's approved, so checking npm alone would re-stage it on every push to main.
+      - name: Decide whether to publish to npm
+        id: npm
+        env:
+          CREATED: ${{ steps.tag.outputs.created }}
+          VERSION: ${{ steps.tag.outputs.version }}
+          ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          NAME=$(node -p "require('./package.json').name")
+          if npm view "${NAME}@${VERSION}" version 2>/dev/null | grep -q .; then
+            echo "::notice::${NAME}@${VERSION} is already on npm — skipping the npm publish."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          elif [ "$CREATED" = "true" ] || [ "$ATTEMPT" -gt 1 ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
           else
-            echo "on_npm=false" >> "$GITHUB_OUTPUT"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
           fi
 
   npm-publish:
     name: Publish to npm
     needs: tag-release
-    if: needs.tag-release.outputs.tagged == 'true' && needs.tag-release.outputs.on_npm != 'true'
+    if: needs.tag-release.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -125,7 +161,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.tag-release.outputs.tag }}
+          ref: ${{ needs.tag-release.outputs.sha }}
 
       # v6 specifically: earlier setup-node versions predate trusted publishing.
       - uses: actions/setup-node@v6
@@ -134,8 +170,7 @@ jobs:
           cache: npm
           registry-url: https://registry.npmjs.org
 
-      # Trusted publishing and `npm stage` need a newer npm than Node 22 may bundle.
-      - run: npm install -g npm@latest
+      - run: npm install -g "npm@${NPM_VERSION}"
 
       - run: npm ci
 
@@ -158,11 +193,13 @@ jobs:
 
       # `stage publish`, not `publish`: the trusted publisher is registered stage-only. No token and
       # no OTP here; 2FA happens at approval time.
+      # --ignore-scripts: prepublishOnly would re-run the gate the steps above just ran. It stays in
+      # package.json as the backstop for a hand publish.
       # --provenance stays explicit: OIDC is documented to add it automatically, but that hasn't
       # held reliably in practice.
       - name: Publish to npm (staged)
         run: |
-          npm stage publish --access public --provenance
+          npm stage publish --access public --provenance --ignore-scripts
           echo "::notice::Staged, not live. Approve it with 'npm stage approve <stage-id>' or on npmjs.com."
 
   prepare-release-pr:
@@ -173,6 +210,11 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+    # Only the newest push to main matters: it computes a release that includes every earlier
+    # commit. Without this, overlapping runs close each other's PRs and can leave the stale one open.
+    concurrency:
+      group: release-pr
+      cancel-in-progress: true
     steps:
       # Checked out after tag-release, so a tag it just pushed is fetched here and counts as the
       # latest release.
@@ -187,6 +229,8 @@ jobs:
           cache: npm
 
       - run: npm ci
+      # Word splitting is intended: SEMANTIC_RELEASE_PACKAGES is a space-separated list.
+      - run: npm install --no-save $SEMANTIC_RELEASE_PACKAGES
 
       - name: Configure git identity
         run: |
@@ -207,7 +251,7 @@ jobs:
         run: |
           BRANCH="bump-release/v${VERSION}"
 
-          npm version "$VERSION" --no-git-tag-version --allow-same-version
+          npm version "$VERSION" --no-git-tag-version --allow-same-version --ignore-scripts
           cp .next-notes.md .pr-body.md
           node scripts/clean-changelogs.mjs "$VERSION"
 

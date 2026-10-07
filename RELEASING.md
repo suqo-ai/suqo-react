@@ -22,10 +22,26 @@ A breaking change goes straight to 1.0.0, even while the version is below 1.0.
    the new `CHANGELOG.md` section.
 3. That PR doesn't start CI by itself, because it was opened with `GITHUB_TOKEN`. Push an empty
    commit to it, or close and reopen it, then merge once it's green.
-4. The merge tags `vX.Y.Z`, creates the GitHub Release and stages the package on npm.
+4. The merge tags `vX.Y.Z` (on the merge commit, even if more PRs land right after), creates the
+   GitHub Release and stages the package on npm.
 5. Approve the staged version with 2FA: `npm stage approve <stage-id>` (the id is in the
-   "Publish to npm" step log), or the "Staged Packages" tab on npmjs.com. Until then nobody can
+   "Publish to npm (staged)" step log), or the "Staged Packages" tab on npmjs.com. Until then nobody can
    install it.
+
+## If a release run fails
+
+Use **"Re-run failed jobs"** on that run. Each step checks what already exists (the tag on the
+remote, the GitHub Release, the version on npm) and only does what's missing, and a re-run is
+allowed to publish to npm. Don't delete the tag to retry.
+
+If the version is staged but not approved yet, a re-run stages it again. Approve or reject the
+first one instead of re-running.
+
+## Tool versions
+
+`release.yml` pins npm (`NPM_VERSION`) and semantic-release (`SEMANTIC_RELEASE_PACKAGES`) on
+purpose: those jobs hold a write token or the npm publish credential. Bump them deliberately.
+semantic-release isn't a devDependency, because it needs Node 22 and this package supports 18.
 
 ## One-time bootstrap: 0.0.1
 
