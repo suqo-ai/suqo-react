@@ -1,6 +1,6 @@
 {
-  "name": "react-suqo-checkout",
-  "version": "0.1.0",
+  "name": "@suqo/react",
+  "version": "0.0.1",
   "description": "Collect a SUQO payment in a React app. Renders inline, no gateway integration required.",
   "license": "Apache-2.0",
   "type": "module",
@@ -32,7 +32,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Code-Pros-AI/react-suqo-checkout.git"
+    "url": "git+https://github.com/suqo-ai/suqo-react.git"
   },
   "keywords": [
     "suqo",
@@ -52,6 +52,7 @@
     "lint": "eslint . --ext .ts,.tsx",
     "format": "prettier --write .",
     "check:dist": "node scripts/check-dist.mjs",
+    "prepare": "node scripts/install-git-hooks.mjs",
     "prepublishOnly": "npm run typecheck && npm run test && npm run lint && npm run build && npm run check:dist"
   },
   "peerDependencies": {

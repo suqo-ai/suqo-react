@@ -1,6 +1,6 @@
 import { StrictMode, useMemo, useState } from 'react'
 
-import { type CheckoutMode, normaliseOrigin, SUQOCheckout } from 'react-suqo-checkout'
+import { type CheckoutMode, normaliseOrigin, SUQOCheckout } from '@suqo/react'
 
 /**
  * A harness, not a demo.

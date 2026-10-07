@@ -1,10 +1,10 @@
-# react-suqo-checkout
+# @suqo/react
 
 Collect a SUQO payment in a React app. The block renders inline, where you put it — no modal,
 no overlay, no page takeover.
 
 ```bash
-npm install react-suqo-checkout
+npm install @suqo/react
 ```
 
 One file, no runtime dependencies, ESM and CJS, works in the Next.js App Router.
@@ -15,7 +15,7 @@ Create a checkout session on your own backend with your API key, then hand the c
 id:
 
 ```tsx
-import { SUQOCheckout } from 'react-suqo-checkout'
+import { SUQOCheckout } from '@suqo/react'
 
 export function Checkout({ sessionId }: { sessionId: string }) {
   return (
@@ -173,6 +173,9 @@ npm run check:dist     # asserts 'use client' survived, no bundled React, no CSS
 
 cd example && npm install && npm run dev
 ```
+
+`npm install` also installs a pre-push hook that blocks pushes to `main` and runs the checks
+above. Releases are cut from conventional commits by a release PR; see [RELEASING.md](RELEASING.md).
 
 ## License
 
