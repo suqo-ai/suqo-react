@@ -16,4 +16,4 @@ export type {
  * This package's version, as published. The release PR keeps it equal to package.json
  * (scripts/sync-version.mjs), and test/version.test.ts fails if they disagree.
  */
-export const VERSION = '0.0.1'
+export const VERSION = '0.0.2'
