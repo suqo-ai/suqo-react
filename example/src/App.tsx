@@ -44,6 +44,9 @@ export function App() {
       }
       onUnavailable={(reason) => log(label, `onUnavailable ${reason}`)}
       onLoadError={(error) => log(label, `onLoadError ${error.stage} ${error.detail}`)}
+      onIntent={(intent) => {
+        window.location.href = intent;
+      }}
     />
   )
 

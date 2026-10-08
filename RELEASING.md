@@ -19,12 +19,14 @@ with the [Conventional Commits](https://www.conventionalcommits.org/) preset (`.
 ## Every release
 
 1. Merge PRs into `main` as usual.
-2. The Release workflow opens (or updates) a `bump-release/vX.Y.Z` PR with the version bump and
+2. The Release workflow opens (or updates) a `bump-release/vX.Y.Z` PR with the version bump (in
+   `package.json`, the exported `VERSION` in `src/index.ts`, and `example/package-lock.json`) and
    the new `CHANGELOG.md` section.
 3. That PR doesn't start CI by itself, because it was opened with `GITHUB_TOKEN`. Push an empty
    commit to it, or close and reopen it, then merge once it's green. Later merges to `main` leave
-   the PR's branch alone unless the release itself changes (a new `feat:`/`fix:`), so your nudge
-   isn't wiped by an unrelated merge. When it does change, nudge again.
+   the PR's branch alone unless the release itself changes (its version, or its notes after a new
+   `feat:`/`fix:`), so your nudge isn't wiped by an unrelated merge, a dependency bump, or the next
+   day's run. When it does change, nudge again.
 4. The merge tags `vX.Y.Z` (on the merge commit, even if more PRs land right after), creates the
    GitHub Release and stages the package on npm.
 5. Approve the staged version with 2FA: `npm stage approve <stage-id>` (the id is in the
@@ -37,12 +39,30 @@ Use **"Re-run failed jobs"** on that run. Each job checks what already exists (t
 remote, the GitHub Release, the version on npm) and only does what's missing. Don't delete the tag
 to retry.
 
-The GitHub Release and the npm publish are separate jobs, so one failing doesn't block the other or
-the next release PR. Only the run that created the tag may publish to npm (its run id is in the tag
+Tagging, the GitHub Release, the npm check and publish, and the release PR are separate jobs, so
+one failing (an npm registry outage, a changelog heading the notes script can't find) doesn't
+block the others. Only the run that created the tag may publish to npm (its run id is in the tag
 message), so re-run **that** run. Re-running a later run, or pushing more commits, won't publish.
 
 If the version is staged but not approved yet, a re-run stages it again. Approve or reject the
 first one instead of re-running.
+
+## Protect main
+
+Turn these on for `main` in the repo's Settings → Rules (they're admin settings, not files):
+
+- **Require a pull request before merging.** The release train assumes `main` only takes merged
+  PRs. Today only the local pre-push hook enforces that, and `--no-verify` skips it.
+- **Require status checks to pass** (the CI `verify` and `react19` jobs).
+- **Require branches to be up to date before merging.** Without it, a `fix:` that lands on `main`
+  while the release PR is open can be merged into that release before the workflow has rebuilt the
+  PR: it ships, but no changelog ever lists it, because the next release starts after that tag.
+
+## Never bump the version by hand
+
+The release PR is the only thing that should change the version. `scripts/sync-version.mjs`
+keeps `VERSION` in `src/index.ts` and the linked package's version in `example/package-lock.json`
+equal to `package.json`, and `test/version.test.ts` fails CI if `VERSION` ever disagrees.
 
 ## Tool versions
 

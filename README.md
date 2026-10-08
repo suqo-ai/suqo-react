@@ -179,4 +179,4 @@ above. Releases are cut from conventional commits by a release PR; see [RELEASIN
 
 ## License
 
-Apache-2.0
+MIT
