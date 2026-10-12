@@ -3,6 +3,11 @@
 Collect a SUQO payment in a React app. The block renders inline, where you put it — no modal,
 no overlay, no page takeover.
 
+[docs/usage.md](./docs/usage.md) covers the same ground as this README with more detail — the
+full props table, every `onUnavailable` reason, the three load deadlines and troubleshooting.
+The wire protocol this package implements against the SUQO web app is
+`js-checkout/docs/protocol.md` in the `js-checkout` repo.
+
 ```bash
 npm install react-suqo-checkout
 ```
